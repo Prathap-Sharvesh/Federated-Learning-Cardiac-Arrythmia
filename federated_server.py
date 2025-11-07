@@ -33,8 +33,9 @@ global_weights = model.get_weights()
 # ----------------------------
 # MODEL AGGREGATION
 # ----------------------------
+
 def aggregate_models():
-    """Aggregate client models and evaluate."""
+    """Aggregate client models and evaluate the global model."""
     global round_number
 
     if len(client_updates) < NUM_CLIENTS:
@@ -42,18 +43,43 @@ def aggregate_models():
 
     print(f"\n🧮 Aggregating model weights for Round {round_number} ...")
 
-    # Average weights layer-wise
+    # Get reference global weights
+    global_weights = model.get_weights()
+
+    # Verify all clients sent weights with same structure
+    first_client = list(client_updates.keys())[0]
+    reference_shapes = [np.shape(w) for w in client_updates[first_client]]
+
+    for cid, weights in client_updates.items():
+        shapes = [np.shape(w) for w in weights]
+        for i, (ref, s) in enumerate(zip(reference_shapes, shapes)):
+            if ref != s:
+                raise ValueError(
+                    f"❌ Shape mismatch in client {cid}, layer {i}: expected {ref}, got {s}"
+                )
+
+    # Average layer-by-layer
     new_weights = []
     for layer_idx in range(len(global_weights)):
-        layer_stack = np.array([client_updates[c][layer_idx] for c in client_updates])
-        new_weights.append(np.mean(layer_stack, axis=0))
+        try:
+            layer_stack = np.stack([client_updates[c][layer_idx] for c in client_updates], axis=0)
+        except ValueError as e:
+            raise ValueError(f"❌ Could not stack weights for layer {layer_idx}: {e}")
+        layer_mean = np.mean(layer_stack, axis=0)
+        new_weights.append(layer_mean)
 
     # Clear old updates
     client_updates.clear()
 
-    # Update and evaluate global model
-    model.set_weights(new_weights)
+    # Apply new global weights safely
+    try:
+        model.set_weights(new_weights)
+    except ValueError as e:
+        for i, (gw, nw) in enumerate(zip(model.get_weights(), new_weights)):
+            print(f"Layer {i}: expected {gw.shape}, got {nw.shape}")
+        raise ValueError(f"❌ Failed to set global weights: {e}")
 
+    # Evaluate the global model
     try:
         X_test = np.load("ecg_test_data_reduced.npy")
         y_test = np.load("ecg_test_labels_reduced.npy")
@@ -62,14 +88,11 @@ def aggregate_models():
     except Exception as e:
         print(f"⚠️ Evaluation skipped (test data not found): {e}")
 
-    # Save global model checkpoint
+    # Save global model
     model.save("global_model.h5")
-
-    # Increment round
     round_number += 1
 
     return new_weights
-
 
 # ----------------------------
 # MQTT CALLBACKS
