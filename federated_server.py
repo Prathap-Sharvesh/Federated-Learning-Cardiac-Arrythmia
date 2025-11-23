@@ -81,8 +81,8 @@ def aggregate_models():
 
     # Evaluate the global model
     try:
-        X_test = np.load("ecg_test_data_reduced.npy")
-        y_test = np.load("ecg_test_labels_reduced.npy")
+        X_test = np.load("X_test.npy")
+        y_test = np.load("y_test.npy")
         loss, acc = model.evaluate(X_test, y_test, verbose=0)
         print(f"📊 Global Model Evaluation -> Loss: {loss:.4f} | Accuracy: {acc*100:.2f}%")
     except Exception as e:
@@ -140,6 +140,12 @@ client.on_message = on_message
 client.connect(BROKER, 1883)
 
 print("\n🚀 Federated ECG Server started...")
+print("📤 Sending initial global model to all clients...")
+initial_payload = json.dumps({
+    "model_json": model.to_json(),
+    "global_weights": [w.tolist() for w in global_weights]
+})
+client.publish(AGG_TOPIC, initial_payload)
 print("Waiting for client updates...\n")
 
 client.loop_forever()
